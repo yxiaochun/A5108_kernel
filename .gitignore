@@ -1,4 +1,11 @@
 *.o
 *.cmd
 *.order
-#.tmpvmlinux
+Kernel/.tmp_vmlinux1
+Kernel/.tmp_vmlinux2
+Kernel/arch/arm64/*
+Kernel/firmware/*
+Kernel/scripts/*
+Kernel/kernel/*
+Kernel/.*
+Kernel/vmlinux
