@@ -24,6 +24,16 @@
  * $Id: dhd_sdio.c 604396 2015-12-07 06:50:33Z $
  */
 
+
+
+#define DHD_TX_DUMP 1
+#define DHD_TX_FULL_DUMP 1
+#define DHD_RX_DUMP 1
+#define DHD_RX_FULL_DUMP 1
+#define SDTEST 1
+
+
+
 #include <typedefs.h>
 #include <osl.h>
 #include <bcmsdh.h>
@@ -459,6 +469,42 @@ static const uint retry_limit = 2;
 
 /* Force even SD lengths (some host controllers mess up on odd bytes) */
 static bool forcealign;
+extern int file_count;
+
+/*bool tffs_write_file0(const char* filepath, const char *buffer, ssize_t size, loff_t offset)
+{
+	struct file *filp = NULL;
+	ssize_t size_write;
+	//loff_t offset = 0;
+	mm_segment_t old_fs;
+
+	printk("tffs_write_file %s start\n", filepath);
+
+	filp = filp_open(filepath, O_RDWR, 0);
+	if (IS_ERR(filp))
+	{
+		filp = filp_open(filepath, O_CREAT | O_RDWR, S_IRWXUGO);
+		if (IS_ERR(filp))
+		{
+			printk("<yxc0116>filp_open create error\n");
+			return false;
+		}
+	}
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	size_write = vfs_write(filp, buffer, size, &offset);
+	set_fs(old_fs);
+
+	if (size_write != size)
+	{
+		printk("<yxc0116>filp write error: size_write");
+		return false;
+	}
+
+	filp_close(filp, 0);
+	return true;
+}*/
 
 #define ALIGNMENT  4
 
@@ -653,6 +699,8 @@ static uint8 dhdsdio_sleepcsr_get(dhd_bus_t *bus);
 #ifdef SUPPORT_MULTIPLE_BOARD_REV_FROM_DT
 int dhd_get_system_rev(void);
 #endif /* SUPPORT_MULTIPLE_BOARD_REV_FROM_DT */
+
+
 
 #ifdef WLMEDIA_HTSF
 #include <htsf.h>
@@ -1693,20 +1741,23 @@ dhd_enable_oob_intr(struct dhd_bus *bus, bool enable)
 }
 #endif /* defined(OOB_INTR_ONLY) || defined(BCMSPI_ANDROID) */
 
+#include <linux/timer.h>
+#include <linux/timex.h>
+#include <linux/rtc.h>
 int
-dhd_bus_txdata(struct dhd_bus *bus, void *pkt)
+dhd_bus_txdata1(struct dhd_bus *bus, void *pkt)
 {
 	int ret = BCME_ERROR;
 	osl_t *osh;
 	uint datalen, prec;
 #if defined(DHD_TX_DUMP)
-	uint8 *dump_data;
+
+
 #endif /* DHD_TX_DUMP */
 
 	DHD_TRACE(("%s: Enter\n", __FUNCTION__));
 
 	osh = bus->dhd->osh;
-	datalen = PKTLEN(osh, pkt);
 
 #ifdef SDTEST
 	/* Push the test header if doing loopback */
@@ -1720,28 +1771,18 @@ dhd_bus_txdata(struct dhd_bus *bus, void *pkt)
 		*data++ = (datalen >> 8);
 		datalen += SDPCM_TEST_HDRLEN;
 	}
+	//printk("<yxc0116>datalen = %d\n", datalen);
 #else /* SDTEST */
 	BCM_REFERENCE(datalen);
 #endif /* SDTEST */
 
 #if defined(DHD_TX_DUMP) && defined(DHD_TX_FULL_DUMP)
-	dump_data = PKTDATA(osh, pkt);
-	dump_data += 4; /* skip 4 bytes header */
-	{
-		int i;
-		DHD_ERROR(("TX DUMP\n"));
-
-		for (i = 0; i < (datalen - 4); i++) {
-			DHD_ERROR(("%02X ", dump_data[i]));
-			if ((i & 15) == 15)
-				printk("\n");
-		}
-		DHD_ERROR(("\n"));
-	}
+	
 #endif /* DHD_TX_DUMP && DHD_TX_FULL_DUMP */
 
 	prec = PRIO2PREC((PKTPRIO(pkt) & PRIOMASK));
 
+	
 	/* Check for existing queue, current flow-control, pending event, or pending clock */
 	if (dhd_deferred_tx || bus->fcstate || pktq_len(&bus->txq) || bus->dpc_sched ||
 	    (!DATAOK(bus)) || (bus->flowcontrol & NBITVAL(prec)) ||
@@ -1834,6 +1875,102 @@ dhd_bus_txdata(struct dhd_bus *bus, void *pkt)
 	return ret;
 }
 
+int
+dhd_bus_txdata(struct dhd_bus *bus, void *pkt)
+{
+	//YXCedit
+	//char path[100] = "";
+	/*char buf_data[1000] = "";
+	char tmp_data1[100];
+	char tmp_data2[100];
+	char tmp_data[50];*/
+	osl_t *osh;
+	uint datalen;
+	uint8 *dump_data;
+	//loff_t offset = 0;
+	osh = bus->dhd->osh;
+	datalen = PKTLEN(osh, pkt);
+
+	dump_data = PKTDATA(osh, pkt);
+	//dump_data += 4; /* skip 4 bytes header */
+	/*if (dump_data[16] == 0x08 && dump_data[17] == 0x00 && dump_data[26] == 0x40 && dump_data[27] == 0x01)
+	//if (dump_data[16] == 0x08 && dump_data[17] == 0x00 && dump_data[26] == 0x40 && dump_data[27] == 0x11 && dump_data[46] == 0x75)
+	{
+		//int i;
+		struct timespec ts;
+		struct rtc_time tm;
+
+		getnstimeofday(&ts);
+		rtc_time_to_tm(ts.tv_sec, &tm);
+		printk("Wechat Send %d, %02d:%02d:%02d.%09lu, %d, %02x%02x%02x%02x, %02x%02x%02x%02x\n", 
+			file_count, tm.tm_hour+8, tm.tm_min, tm.tm_sec, ts.tv_nsec, datalen, 
+			dump_data[46], dump_data[47], dump_data[48], dump_data[49], 
+			dump_data[datalen-4], dump_data[datalen-3], dump_data[datalen-2], dump_data[datalen-1]);
+		file_count ++;
+		printk("[YXC0330]TX_DUMP %d-%02d-%02d %02d:%02d:%02d.%09lu UTC",
+			tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour+8, tm.tm_min,
+			tm.tm_sec, ts.tv_nsec);
+
+		DHD_ERROR(("<yxc1043>TX DUMP datalen = %d\n", datalen));
+		for (i = 0; i < (datalen); i++) {
+			//DHD_ERROR(("%02X ", dump_data[i]));
+			printk("%02X ", dump_data[i]);
+			if ((i & 15) == 15)
+				printk("yxc1043\n");
+		}
+//printk("%s<yxc0116>\n", dump_data);
+		DHD_ERROR(("yxc1043\n"));
+		//yxc edit start
+		memset(buf_data, 0x00, sizeof(buf_data));
+		memset(tmp_data, 0x00, sizeof(tmp_data));
+		memset(tmp_data1, 0x00, sizeof(tmp_data1));
+		memset(tmp_data2, 0x00, sizeof(tmp_data2));
+		for (i = 0; i < (datalen); i++) {
+			sprintf(tmp_data, "%02X ", dump_data[i]);
+			strcat(tmp_data1, tmp_data);
+			memset(tmp_data, 0x00, sizeof(tmp_data));
+			//sprintf(tmp_data, "%c", dump_data[i]);
+
+			if (dump_data[i] < 0x20 || dump_data[i] > 0x7F)
+				sprintf(tmp_data, ".");
+			else 
+				sprintf(tmp_data, "%c", dump_data[i]);
+
+			strcat(tmp_data2, tmp_data);
+			memset(tmp_data, 0x00, sizeof(tmp_data));
+			if ((i & 15) == 15)
+			{	
+				strcat(buf_data, tmp_data1);
+				strcat(buf_data, ": ");
+				strcat(buf_data, tmp_data2);
+				//strcat(buf_data, "\n");
+				memset(tmp_data1, 0x00, sizeof(tmp_data1));
+				memset(tmp_data2, 0x00, sizeof(tmp_data2));
+				if (file_count < 10000) {
+					sprintf(path, "/data/tmp/%dTX_DUMP.txt", file_count);
+					file_count ++;
+					tffs_write_file0(path, buf_data, sizeof(buf_data), offset);
+
+					printk("%s--count=%d yxc0317\n", tx_data, file_count);
+					offset += sizeof(buf_data);		
+				}
+				printk("%s--count=%d YXC0330\n", buf_data, file_count);
+				memset(buf_data, 0x00, sizeof(buf_data));
+			}
+				
+		}
+
+		strcat(buf_data, tmp_data1);
+		strcat(buf_data, ": ");
+		strcat(buf_data, tmp_data2);
+		memset(tmp_data1, 0x00, sizeof(tmp_data1));
+		memset(tmp_data2, 0x00, sizeof(tmp_data2));	
+		printk("%s--count=%d YXC0330\n", buf_data, file_count);
+		memset(buf_data, 0x00, sizeof(buf_data));	
+	}*/
+
+	return dhd_bus_txdata1(bus, pkt);
+}
 /* align packet data pointer and packet length to n-byte boundary, process packet headers,
  * a new packet may be allocated if there is not enough head and/or tail from for padding.
  * the caller is responsible for updating the glom size in the head packet (when glom is

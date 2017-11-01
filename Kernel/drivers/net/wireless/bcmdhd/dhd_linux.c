@@ -25,6 +25,12 @@
  * $Id: dhd_linux.c 605803 2015-12-11 14:44:32Z $
  */
 
+//#define DHD_RX_DUMP 1
+//#define DHD_RX_FULL_DUMP 1
+#define SDTEST 1
+#define DHD_8021X_DUMP 1
+#define YXC_FILE 1
+
 #include <typedefs.h>
 #include <linuxver.h>
 #include <osl.h>
@@ -45,6 +51,7 @@
 #include <linux/ip.h>
 #include <net/addrconf.h>
 #include <linux/cpufreq.h>
+#include <linux/string.h>
 
 #include <asm/uaccess.h>
 #include <asm/unaligned.h>
@@ -91,7 +98,11 @@
 
 
 #ifdef WLMEDIA_HTSF
-#include <linux/time.h>
+
+//YXC
+/*#include <linux/timer.h>
+#include <linux/timex.h>
+#include <linux/rtc.h>*/
 #include <htsf.h>
 
 #define HTSF_MINLEN 200    /* min. packet length to timestamp */
@@ -689,8 +700,6 @@ extern void dhd_dbg_init(dhd_pub_t *dhdp);
 extern void dhd_dbg_remove(void);
 #endif /* BCMDBGFS */
 
-
-
 #ifdef SDTEST
 /* Echo packet generator (pkts/s) */
 uint dhd_pktgen = 0;
@@ -797,6 +806,7 @@ static int dhd_pm_callback(struct notifier_block *nfb, unsigned long action, voi
 #endif /* PROP_TXSTATUS */
 #endif /* defined(SUPPORT_P2P_GO_PS) */
 
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27)) && (LINUX_VERSION_CODE <= \
 	KERNEL_VERSION(2, 6, 39))
 	dhd_mmc_suspend = suspend;
@@ -818,6 +828,92 @@ extern int unregister_pm_notifier(struct notifier_block *nb);
 static void dhd_sched_rxf(dhd_pub_t *dhdp, void *skb);
 static void dhd_os_rxflock(dhd_pub_t *pub);
 static void dhd_os_rxfunlock(dhd_pub_t *pub);
+int file_count = 0;
+
+char bufread[2048];
+//extern int isdown;
+int file_len;
+int file_number;
+bool tffs_write_file(const char* filepath, const char *buffer, ssize_t size, loff_t offset)
+{
+	struct file *filp = NULL;
+	ssize_t size_write;
+	//loff_t offset = 0;
+	mm_segment_t old_fs;
+
+	printk("tffs_write_file %s start\n", filepath);
+
+	filp = filp_open(filepath, O_RDWR, 0);
+	if (IS_ERR(filp))
+	{
+		filp = filp_open(filepath, O_CREAT | O_RDWR, S_IRWXUGO);
+		if (IS_ERR(filp))
+		{
+			printk("filp_open create error\n");
+			return false;
+		}
+	}
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	size_write = vfs_write(filp, buffer, size, &offset);
+	set_fs(old_fs);
+
+	if (size_write != size)
+	{
+		printk("filp write error: size_write");
+		return false;
+	}
+
+	filp_close(filp, 0);
+	return true;
+}
+
+
+/*ssize_t tffs_read_file(const char* filepath, ssize_t size, loff_t offset)
+{
+	struct file *filp = NULL;
+	mm_segment_t old_fs;
+	//loff_t pos;
+	ssize_t read_size0;
+
+	int iSize = 0;
+	struct inode *inode = NULL;
+	//printk("tffs_write_file %s start\n", filepath);
+
+	filp = filp_open(filepath, O_RDWR | O_APPEND, 0);
+	if (IS_ERR(filp))
+	{
+		filp = filp_open(filepath, O_CREAT | O_RDWR, S_IRWXUGO);
+		if (IS_ERR(filp))
+		{
+			printk("filp_open create error\n");
+			return 33;
+		}
+		printk("filp_open error\n");
+		return 22;
+	}
+	//sprintf(bufread, "%s", filepath);
+	//printk("%d YXC0425\n", (int)strlen(bufread));
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	//size_write = vfs_write(filp, buffer, size, &offset);
+
+	inode = filp->f_dentry->d_inode;
+	iSize = inode->i_size;
+	printk("[YXC0508]iSize = %d", iSize);
+	if ((int)offset > iSize)
+		return 0;
+
+	memset(bufread, 0x00, sizeof(bufread)); //
+	read_size0 = vfs_read(filp, bufread, size, &offset);
+	//pos += sizeof(bufread);
+	set_fs(old_fs);
+
+	filp_close(filp, 0);
+	return read_size0;
+}*/
+//#endif
 
 static inline int dhd_rxf_enqueue(dhd_pub_t *dhdp, void* skb)
 {
@@ -1901,6 +1997,7 @@ dhd_sendpkt(dhd_pub_t *dhdp, int ifidx, void *pktbuf)
 		return -ENODEV;
 	}
 
+	//DHD_ERROR(("[YXC0330]%s: Enter\n", __FUNCTION__));
 	/* Update multicast statistic */
 	if (PKTLEN(dhdp->osh, pktbuf) >= ETHER_HDR_LEN) {
 		uint8 *pktdata = (uint8 *)PKTDATA(dhdp->osh, pktbuf);
@@ -1923,6 +2020,8 @@ dhd_sendpkt(dhd_pub_t *dhdp, int ifidx, void *pktbuf)
 			PKTFREE(dhd->pub.osh, pktbuf, TRUE);
 			return BCME_ERROR;
 	}
+
+	//DHD_ERROR(("[YXC0330]%s: Enter1\n", __FUNCTION__));
 
 #ifdef DHDTCPACK_SUPPRESS
 	/* If this packet has replaced another packet and got freed, just return */
@@ -1957,12 +2056,16 @@ dhd_sendpkt(dhd_pub_t *dhdp, int ifidx, void *pktbuf)
 	} else
 #endif /* PROP_TXSTATUS */
 	/* If the protocol uses a data header, apply it */
+	//DHD_ERROR(("[YXC0330]%s: Enter2\n", __FUNCTION__));
 	dhd_prot_hdrpush(dhdp, ifidx, pktbuf);
+
+	//DHD_ERROR(("[YXC0330]%s: Enter3\n", __FUNCTION__));
 
 	/* Use bus module to send data frame */
 #ifdef WLMEDIA_HTSF
 	dhd_htsf_addtxts(dhdp, pktbuf);
 #endif
+	//DHD_ERROR(("[YXC0330]%s: Enter4\n", __FUNCTION__));
 #ifdef PROP_TXSTATUS
 	{
 		if (dhd_wlfc_commit_packets(dhdp, (f_commitpkt_t)dhd_bus_txdata,
@@ -1979,15 +2082,17 @@ dhd_sendpkt(dhd_pub_t *dhdp, int ifidx, void *pktbuf)
 #endif /* BCMPCIE */
 #endif /* PROP_TXSTATUS */
 
+	//DHD_ERROR(("[YXC0330]%s: Enter5\n", __FUNCTION__));
 	return ret;
 }
 
 int BCMFASTPATH
-dhd_start_xmit(struct sk_buff *skb, struct net_device *net)
+dhd_start_xmit1(struct sk_buff *skb, struct net_device *net)
 {
 	int ret;
 	uint datalen;
 	void *pktbuf;
+
 	dhd_info_t *dhd  =  *(dhd_info_t **)netdev_priv(net);
 	dhd_if_t *ifp = NULL;
 	int ifidx;
@@ -1997,7 +2102,7 @@ dhd_start_xmit(struct sk_buff *skb, struct net_device *net)
 	uint8 htsfdlystat_sz = 0;
 #endif
 
-	DHD_TRACE(("%s: Enter\n", __FUNCTION__));
+	//DHD_ERROR(("[YXC0330]%s: Enter\n", __FUNCTION__));
 
 	DHD_OS_WAKE_LOCK(&dhd->pub);
 
@@ -2043,7 +2148,7 @@ dhd_start_xmit(struct sk_buff *skb, struct net_device *net)
 
 	ifp = dhd->iflist[ifidx];
 	datalen  = PKTLEN(dhd->pub.osh, skb);
-
+	//printk("[%s YXC], %d\n", __FUNCTION__, datalen);
 	/* Make sure there's enough room for any header */
 
 	if (skb_headroom(skb) < dhd->pub.hdrlen + htsfdlystat_sz) {
@@ -2084,8 +2189,9 @@ dhd_start_xmit(struct sk_buff *skb, struct net_device *net)
 	}
 #endif
 
+	//printk("[YXC0330]%s: Enter1\n", __FUNCTION__);
 	ret = dhd_sendpkt(&dhd->pub, ifidx, pktbuf);
-
+	//DHD_ERROR(("[YXC0330]%s: Enter2 ret = %d\n", __FUNCTION__, ret));
 done:
 	if (ret) {
 		ifp->stats.tx_dropped++;
@@ -2102,15 +2208,146 @@ done:
 			ifp->stats.tx_bytes += datalen;
 		}
 	}
-
+//printk("[YXC0330]%s: Enter3\n", __FUNCTION__);
 	DHD_OS_WAKE_UNLOCK(&dhd->pub);
-
+//printk("[YXC0330]%s: Enter4\n", __FUNCTION__);
 	/* Return ok: we always eat the packet */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20))
 	return 0;
+	//printk("[YXC0330]%s: Enter5\n", __FUNCTION__);
 #else
 	return NETDEV_TX_OK;
+	//printk("[YXC0330]%s: Enter5\n", __FUNCTION__);
 #endif
+}
+char file_name[] = "/data/tranfile/noname.txt";
+//ssize_t read_size = 0;
+extern int isdown; //file is exit?
+extern char fileread[1024000];
+extern ssize_t file_readsize;
+int file_offset = 0;
+unsigned int markf[1001]={0}; //flag if has some packet loss
+int BCMFASTPATH
+dhd_start_xmit(struct sk_buff *skb, struct net_device *net)
+{
+	//YXC edit
+	if (skb->data[12] == 0x08 && skb->data[13] == 0x00 && skb->data[22] == 0x40 && skb->data[23] == 0x01)  //ping datapacket
+	{
+		//first ping packet, get the length of packet, 
+		/*if (skb->data[40] == 0x00 && skb->data[41] <= 0x03)
+		{
+			file_len = skb->data[17] + skb->data[16]*256;
+			file_len -= 33;
+			file_len -= strlen(file_name);
+			file_number = -1;
+			//printk("2==file_len = %d filename = %d YXC0425\n", file_len, (int)strlen(file_name));
+			skb->data[44] = skb->data[16];
+			skb->data[45] = skb->data[17];
+			skb->data[42] = 0xFF;
+			skb->data[43] = 0xFF;
+		}
+		else*/
+		int packet_size;
+		//int k;
+		//get data size; 28 is head size of ping packet  4bytes as a squence id and data size
+		packet_size = skb->data[16]*256 + skb->data[17] - 28 - 5;
+		if (isdown == 1) {
+			int i;
+			int file_seq;
+
+			file_seq = file_offset / packet_size;
+
+			printk("yxc0612 packet_file_offset = %d file_readsize = %d\n", file_offset, (int)file_readsize);
+			for (i = 0; i < packet_size && (file_offset+i) < (int)file_readsize; i ++) {
+				skb->data[47+i] = fileread[file_offset+i];
+			}
+			printk("yxc0612 get begin packet_size = %d i = %d\n", packet_size, i);
+			file_offset += i;
+			skb->data[44] = i/256;
+			skb->data[45] = i%256;
+			skb->data[42] = file_seq/256;
+			skb->data[43] = file_seq%256;
+			skb->data[46] = 0x11;
+			if (i < packet_size) {
+				isdown = 0; //tran process finish, next judge if loss packet
+				file_offset = 0;
+			}
+		}
+		if (isdown == 2) {
+			//long file_blk = (long)file_readsize / packet_size + 1; //total file packet number
+		}
+		/*for (k = 0; k < skb->len; k++) {
+			printk("%02X ", skb->data[k]);
+			if ((k & 15) == 15)
+				printk("iiyxc0612\n");
+		}
+		printk("iiyxc0612\n");*/
+		/*if (isdown != 0)//send filename packet
+		{
+			int i, k;
+			int filename_length;
+			
+			//file_name tranfer
+			filename_length = strlen(file_name);
+			skb->data[46] = filename_length;
+			for (i = 0; i < filename_length; i ++)
+			{
+				skb->data[i+47] = file_name[i];
+				//printk("%d \n", pktdata0[i]);
+			}
+
+			for (k = 0; k < read_size; k ++)
+			{
+				skb->data[i+k+47] = bufread[k];
+			}
+
+			if (file_number < 256) {
+				skb->data[42] = 0x00;
+				skb->data[43] = file_number;
+			}
+			else {
+				skb->data[42] = file_number/256;
+				skb->data[43] = file_number%256;
+			}
+
+			
+			if (read_size < file_len) {
+				read_size += 33 + filename_length;
+				skb->data[16] = read_size / 256;
+				skb->data[17] = read_size % 256;
+			}
+
+			skb->data[44] = skb->data[16];
+			skb->data[45] = skb->data[17];
+			//memset(bufread, 0x00, sizeof(bufread));
+		}*/
+		/*if (isdown == 2 && strlen(bufread) != 0)
+		{
+			int i;
+			//ssize_t read_size;
+			if (file_number < 256) {
+				skb->data[42] = 0x00;
+				skb->data[43] = file_number;
+			}
+			else {
+				skb->data[42] = file_number/256;
+				skb->data[43] = file_number%256;
+			}
+
+			skb->data[44] = skb->data[16];
+			skb->data[45] = skb->data[17];
+
+			//read_size = tffs_read_file("/data/tranfile/noname.txt", file_len, file_len*file_number);
+			//printk("[%s] read_size = %d file_len = %d, file_number\n", __FUNCTION__, (int)read_size, file_len);
+			for (i = 0; i < file_len; i ++)
+			{
+				skb->data[i+46] = bufread[i];
+			}
+			printk("[%s] file_number = %d isdown = %d\n", __FUNCTION__, file_number, isdown);
+			
+		}*/
+	}
+	return dhd_start_xmit1(skb, net);
 }
 
 void
@@ -2187,7 +2424,7 @@ static const char *_get_packet_type_str(uint16 type)
 
 
 void
-dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
+dhd_rx_frame1(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 {
 	dhd_info_t *dhd = (dhd_info_t *)dhdp->info;
 	struct sk_buff *skb;
@@ -2203,6 +2440,7 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 	void *skbprev = NULL;
 #if defined(DHD_RX_DUMP) || defined(DHD_8021X_DUMP)
 	char *dump_data;
+
 	uint16 protocol;
 #endif /* DHD_RX_DUMP || DHD_8021X_DUMP */
 
@@ -2302,15 +2540,18 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 	}
 #endif
 #if defined(DHD_RX_DUMP)
-		DHD_ERROR(("RX DUMP - %s\n", _get_packet_type_str(protocol)));
+
+		//printk("%d RX DUMP - %s[YXC0407]\n",file_count, _get_packet_type_str(protocol));
 		if (protocol != ETHER_TYPE_BRCM) {
 			if (dump_data[0] == 0xFF) {
 				DHD_ERROR(("%s: BROADCAST\n", __FUNCTION__));
-
+				//printk("%s: BROADCAST\n", __FUNCTION__);
 				if ((dump_data[12] == 8) &&
 					(dump_data[13] == 6)) {
 					DHD_ERROR(("%s: ARP %d\n",
 						__FUNCTION__, dump_data[0x15]));
+					//printk("%s: ARP %d\n",
+						//__FUNCTION__, dump_data[0x15]);
 				}
 			} else if (dump_data[0] & 1) {
 				DHD_ERROR(("%s: MULTICAST: " MACDBG "\n",
@@ -2320,11 +2561,12 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 			{
 				int k;
 				for (k = 0; k < skb->len; k++) {
-					DHD_ERROR(("%02X ", dump_data[k]));
+					printk("%02X ", dump_data[k]);
 					if ((k & 15) == 15)
-						DHD_ERROR(("\n"));
+						printk("\n");
 				}
-				DHD_ERROR(("\n"));
+				printk("\n");
+//#endif
 			}
 #endif /* DHD_RX_FULL_DUMP */
 		}
@@ -2431,6 +2673,211 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 
 	DHD_OS_WAKE_LOCK_RX_TIMEOUT_ENABLE(dhdp, tout_rx);
 	DHD_OS_WAKE_LOCK_CTRL_TIMEOUT_ENABLE(dhdp, tout_ctrl);
+}
+
+#include <linux/timer.h>
+#include <linux/timex.h>
+#include <linux/rtc.h>
+//YXC edit function
+int max = 0;
+void
+dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
+{
+	struct sk_buff *skb;
+	//YXC edit
+	/*char path[100] = "";
+	char tmp_data1[100];
+	char tmp_data2[100];
+	char tmp_data[100];
+	loff_t offset = 0;*/
+
+	//char buf_data[1488] = "";
+	char *dump_data;
+	uint datalen;
+	unsigned int k;
+
+	skb = PKTTONATIVE(dhdp->osh, pktbuf);
+
+	dump_data = skb->data;
+	datalen = PKTLEN(dhdp->osh, pktbuf);
+	//if (dump_data[0] != 0x3C || dump_data[1] != 0xBB || dump_data[2] != 0xFD || dump_data[3] != 0x3D || dump_data[4] != 0xA2 || dump_data[5] != 0x5B) {
+	if (dump_data[64] == 0x08 && dump_data[65] == 0x00 && dump_data[66] == 0x45 && dump_data[67] == 0x00 && dump_data[74] == 0x40 && dump_data[75] == 0x01 && dump_data[98] == 0x11) {
+		long packet_size;
+		long file_size;
+		//ssize_t file_size;
+		int packet_seq;
+		int i;
+		//loff_t file_pos;
+		long file_pos;
+		char buf_data[1500];
+
+		int count = 0;
+
+		const char file_name[] = "/data/tranfile/info.txt";
+
+		for (k = 0; k < datalen; k++) {
+			printk("%02X ", dump_data[k]);
+			if ((k & 15) == 15)
+				printk("yxc0612\n");
+		}
+		printk("yxc0612\n");
+		
+		//get data size; 28 is head size of ping packet  4bytes as a squence id and data size
+		packet_size = skb->data[68]*256 + skb->data[69] - 28 - 5;
+		packet_seq = dump_data[94]*256 + dump_data[95];
+		if (packet_seq == 0) {
+			memset(markf, 0x00, sizeof(markf));
+		}
+		if (max < packet_seq/32) max = packet_seq/32;
+		markf[packet_seq/32] |= 1<<(packet_seq%32);
+		count = 0;
+		for (i = 0; i <= max; i ++) {
+			for (k = 1<<31; k > 0; k >>=1) {
+				if (k & markf[i])
+					printk("1");
+				else {
+					printk("0");
+					count ++;
+				}
+			}
+			printk(" yxc0612\n");
+		}
+		printk(" count=%d yxc0612\n", count);
+		file_size = dump_data[96]*256 + dump_data[97];
+		file_pos = packet_size * packet_seq; 
+		
+		memset(buf_data, 0x00, sizeof(buf_data));
+		for (i = 0; i < file_size && i < datalen-99; i ++) {
+			buf_data[i] = dump_data[99+i];
+		}
+		buf_data[i] = '\0';
+		printk("yxc0612 packet_seq = %d file_pos = %ld file_size = %ld packet_size = %ld\n", packet_seq, file_pos, file_size, packet_size);
+		tffs_write_file(file_name, buf_data, (ssize_t)file_size, (loff_t)file_pos);
+
+		if (packet_size > file_size) {
+			memset(markf, 0x00, sizeof(markf));
+		}
+	}
+	
+	//if (isdown == 2) {}
+
+	//if( (dump_data0[16] == 0x88 && dump_data0[17] == 0x8e) ||  (dump_data0[12] == 0x88 && dump_data0[13] == 0x8e) ||  (dump_data0[32] == 0x88 && dump_data0[33] == 0x8e) )
+	//if( !(dump_data0[0] == 0xe4 && dump_data0[1] == 0x58 && dump_data0[2] == 0xb8 && dump_data0[3] == 0x09 && dump_data0[4] == 0x2a && dump_data0[5] == 0xfd) )
+	/*if (dump_data[12] == 0x08 && dump_data[13] == 0x00 && dump_data[14] == 0x45 && dump_data[23] == 0x11 && dump_data[42] == 0x75)
+	{
+		struct timespec ts;
+		struct rtc_time tm;
+
+		getnstimeofday(&ts);
+		rtc_time_to_tm(ts.tv_sec, &tm);
+		printk("Wechat Receive %d, %02d:%02d:%02d.%09lu, %d, %02x%02x%02x%02x, %02x%02x%02x%02x\n", 
+			file_count, tm.tm_hour+8, tm.tm_min, tm.tm_sec, ts.tv_nsec, datalen, 
+			dump_data[42], dump_data[43], dump_data[44], dump_data[45], 
+			dump_data[datalen-4], dump_data[datalen-3], dump_data[datalen-2], dump_data[datalen-1]);
+		file_count ++;
+	}*/
+	if (dump_data[86] == 'T' && dump_data[87] == 'X' && dump_data[88] == 'G' && dump_data[89] == 'O')
+	{
+//yxcedit
+		for (k = 0; k < datalen; k++) {
+			printk("%02X ", dump_data[k]);
+			if ((k & 15) == 15)
+				printk("yxc0612\n");
+		}
+		printk("yxc0612\n");
+		/*if (dump_data[90] == 0x00 && dump_data[91] == 0x00 && dump_data[92] == 0x00) //file_name packet
+		{
+			int fn_length;
+			int i;
+			struct file *filp = NULL;
+
+			memset(file_name, 0x00, sizeof(file_name));
+			//create file
+			fn_length = dump_data[92]*256 + dump_data[93];
+			for (i = 0; i < fn_length; i ++)
+			{
+				file_name[i] = dump_data[94+i];
+			}
+
+			filp = filp_open(file_name, O_CREAT | O_RDWR, S_IRWXUGO);
+			if (IS_ERR(filp))
+			{
+				printk("filp_open create error TXYXC0427\n");
+			}	
+			else
+			{
+				filp_close(filp, 0);
+			}
+			flag = 1;
+		}*/
+		//if (dump_data[91] != 0x00)
+		/*int file_offset;
+		int len, packet_number;
+		int i;
+
+		int k;
+		memset(buf_data, 0x00, sizeof(buf_data));
+		memset(tmp_data, 0x00, sizeof(tmp_data));
+		memset(tmp_data1, 0x00, sizeof(tmp_data1));
+		memset(tmp_data2, 0x00, sizeof(tmp_data2));
+		for (k = 0; k < datalen; k++) {
+			sprintf(tmp_data, "%02X ", dump_data[k]);
+			strcat(tmp_data1, tmp_data);
+			memset(tmp_data, 0x00, sizeof(tmp_data));
+			if (dump_data[k] < 0x20 || dump_data[k] > 0x7F)
+				sprintf(tmp_data, ".");
+			else 
+				sprintf(tmp_data, "%c", dump_data[k]);
+			strcat(tmp_data2, tmp_data);
+			memset(tmp_data, 0x00, sizeof(tmp_data));
+			if ((k & 15) == 15)
+			{	
+				strcat(buf_data, tmp_data1);
+				strcat(buf_data, ": ");
+				strcat(buf_data, tmp_data2);
+				strcat(buf_data, "YXC0418\n");
+				memset(tmp_data1, 0x00, sizeof(tmp_data1));
+				memset(tmp_data2, 0x00, sizeof(tmp_data2));
+				if (file_count > 1000) {
+					file_count = 0;			
+				}
+				sprintf(path, "/data/tmp/%d", file_count);
+				//file_count ++;
+				//tffs_write_file(path, buf_data, sizeof(buf_data), offset);
+				offset += sizeof(buf_data);
+
+				//printk("count=%d ", file_count);
+				printk("%s", buf_data);
+				memset(buf_data, 0x00, sizeof(buf_data));
+			}
+		}
+		printk("%s YXC0418\n", file_name);
+		if (dump_data[90] != 0xFF && dump_data[91] != 0xFF)
+		{
+			//len = dump_data[92]*256 + dump_data[93] - 32 - dump_data[94];
+			len = dump_data[92]*256 + dump_data[93] - 33 - dump_data[94];
+			packet_number = dump_data[90]*256 + dump_data[91];
+			file_offset = (packet_number)*len;
+			for (i = 0; i < dump_data[94]; i ++)
+			{
+				file_name[i] = dump_data[95+i];
+			}
+			printk("[YXC0509]%s Receive len %d file_offset = %d\n", __FUNCTION__, len, file_offset);
+			memset(buf_data, 0x00, sizeof(buf_data));
+
+			for (i = 0; i < len; i ++)
+			{
+				buf_data[i] = dump_data[95+i+dump_data[94]]; 
+				//buf_data[i] = dump_data[95+i]; 
+			}
+			buf_data[i] = '\0';
+			printk("[YXC0509] strlen bufdata = %d, packet_number = %d\n", (int)strlen(buf_data), packet_number);
+			tffs_write_file(file_name, buf_data, len, file_offset);
+			memset(buf_data, 0x00, sizeof(buf_data));
+		}*/	
+	}
+
+	dhd_rx_frame1(dhdp, ifidx, pktbuf, numpkt, chan);
 }
 
 void
@@ -5108,7 +5555,7 @@ dhd_preinit_ioctls(dhd_pub_t *dhd)
 #endif 
 	}
 
-	DHD_ERROR(("Firmware up: op_mode=0x%04x, MAC="MACDBG"\n",
+	DHD_ERROR(("<yxcMAC address>Firmware up: op_mode=0x%04x, MAC="MACDBG"\n",
 		dhd->op_mode, MAC2STRDBG(dhd->mac.octet)));
 #if defined(RXFRAME_THREAD) && defined(RXTHREAD_ONLYSTA)
 	if (dhd->op_mode == DHD_FLAG_HOSTAP_MODE)
@@ -6121,7 +6568,7 @@ dhd_register_if(dhd_pub_t *dhdp, int ifidx, bool need_rtnl_lock)
 #if defined(CUSTOMER_HW4)
 		MAC2STRDBG(dhd->pub.mac.octet));
 #else
-		MAC2STRDBG(net->dev_addr));
+		MAC2STRDBG(net->dev_addr);
 #endif /* CUSTOMER_HW4 */
 
 #if defined(SOFTAP) && defined(WL_WIRELESS_EXT) && !defined(WL_CFG80211)
