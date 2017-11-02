@@ -312,7 +312,6 @@ on boot
 on fs
     mount_all /fstab.samsungexynos7580
     setprop ro.crypto.fuse_sdcard true
-    
 
 # sem_daemon permission
     chown system system /efs/sec_efs/ssp_data
