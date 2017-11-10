@@ -25,6 +25,9 @@
  * $Id: dhd_linux.c 605803 2015-12-11 14:44:32Z $
  */
 
+#define DHD_RX_DUMP 1
+#define DHD_RX_FULL_DUMP 1
+
 #include <typedefs.h>
 #include <linuxver.h>
 #include <osl.h>
@@ -2322,9 +2325,9 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 				for (k = 0; k < skb->len; k++) {
 					DHD_ERROR(("%02X ", dump_data[k]));
 					if ((k & 15) == 15)
-						DHD_ERROR(("\n"));
+						DHD_ERROR((" yxcrx\n"));
 				}
-				DHD_ERROR(("\n"));
+				DHD_ERROR((" yxcrx\n"));
 			}
 #endif /* DHD_RX_FULL_DUMP */
 		}

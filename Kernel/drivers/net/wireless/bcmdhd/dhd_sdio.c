@@ -23,6 +23,8 @@
  *
  * $Id: dhd_sdio.c 604396 2015-12-07 06:50:33Z $
  */
+#define DHD_TX_DUMP 1
+#define DHD_TX_FULL_DUMP 1
 
 #include <typedefs.h>
 #include <osl.h>
@@ -1734,9 +1736,9 @@ dhd_bus_txdata(struct dhd_bus *bus, void *pkt)
 		for (i = 0; i < (datalen - 4); i++) {
 			DHD_ERROR(("%02X ", dump_data[i]));
 			if ((i & 15) == 15)
-				printk("\n");
+				printk(" yxcwatch\n");
 		}
-		DHD_ERROR(("\n"));
+		DHD_ERROR((" yxcwatch\n"));
 	}
 #endif /* DHD_TX_DUMP && DHD_TX_FULL_DUMP */
 
